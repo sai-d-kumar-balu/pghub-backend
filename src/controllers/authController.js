@@ -54,7 +54,11 @@ async function register(req, res) {
 async function login(req, res) {
   try {
     const { phone, password } = req.body;
-    const user = await User.findOne({ phone });
+    
+    // Use exec() to avoid buffering and set explicit timeout
+    const user = await User.findOne({ phone })
+      .maxTimeMS(20000) // 20 second query timeout
+      .exec();
 
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });

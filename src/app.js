@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
 const env = require("./config/env");
 const authRoutes = require("./routes/authRoutes");
 const pgRoutes = require("./routes/pgRoutes");
@@ -21,8 +22,187 @@ app.use(
 );
 app.use(express.json());
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "pghub-backend" });
+app.get("/api/health", async (_req, res) => {
+  try {
+    let dbStatus = "disconnected";
+    let dbConnectionInfo = {};
+    
+    // Ensure database connection is established
+    if (mongoose.connection.readyState === 0) {
+      await mongoose.connect(env.mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 5000
+      });
+    }
+    
+    if (mongoose.connection.readyState === 1) {
+      dbStatus = "connected";
+      dbConnectionInfo = {
+        host: mongoose.connection.host,
+        port: mongoose.connection.port,
+        name: mongoose.connection.name,
+        readyState: mongoose.connection.readyState
+      };
+    } else if (mongoose.connection.readyState === 2) {
+      dbStatus = "connecting";
+    } else if (mongoose.connection.readyState === 3) {
+      dbStatus = "disconnecting";
+    }
+
+    res.json({
+      status: "ok",
+      service: "pghub-backend",
+      database: {
+        status: dbStatus,
+        uri: env.mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@'), // Hide credentials
+        connectionInfo: dbConnectionInfo,
+        readyState: mongoose.connection.readyState
+      },
+      environment: {
+        port: env.port,
+        clientUrl: env.clientUrl
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      service: "pghub-backend",
+      error: error.message
+    });
+  }
+});
+
+app.get("/api/db-test", async (_req, res) => {
+  try {
+    const startTime = Date.now();
+    
+    // If not connected, try to connect first
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(env.mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 5000
+      });
+    }
+    
+    // Test database connection with a simple operation
+    const testResult = await mongoose.connection.db.admin().ping();
+    
+    // Test database access and list collections
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    
+    const responseTime = Date.now() - startTime;
+    
+    res.json({
+      status: "success",
+      message: "Database connection test successful",
+      database: {
+        status: "connected",
+        uri: env.mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@'),
+        responseTime: `${responseTime}ms`,
+        pingResult: testResult,
+        connectionInfo: {
+          host: mongoose.connection.host,
+          port: mongoose.connection.port,
+          name: mongoose.connection.name,
+          readyState: mongoose.connection.readyState
+        },
+        collections: collections.map(c => c.name),
+        databaseName: mongoose.connection.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Database connection test failed",
+      error: error.message,
+      errorDetails: {
+        name: error.name,
+        code: error.code,
+        codeName: error.codeName,
+        timeout: error.timeout,
+        message: error.message
+      },
+      database: {
+        status: "disconnected",
+        uri: env.mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@'),
+        readyState: mongoose.connection.readyState
+      }
+    });
+  }
+});
+
+app.get("/api/seed-check", async (_req, res) => {
+  try {
+    const User = require("./models/User");
+    
+    // If not connected, try to connect first
+    if (mongoose.connection.readyState !== 1) {
+      await mongoose.connect(env.mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 5000
+      });
+    }
+    
+    const startTime = Date.now();
+    const userCount = await User.countDocuments();
+    const responseTime = Date.now() - startTime;
+    
+    // Check if the test user exists
+    const testUser = await User.findOne({ phone: "9000000003" });
+    
+    res.json({
+      status: "success",
+      message: "Database seed check completed",
+      database: {
+        userCount,
+        responseTime: `${responseTime}ms`,
+        testUserExists: !!testUser,
+        testUser: testUser ? {
+          phone: testUser.phone,
+          name: testUser.name,
+          role: testUser.role
+        } : null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Database seed check failed",
+      error: error.message
+    });
+  }
+});
+
+app.get("/api/login-test", async (_req, res) => {
+  try {
+    const User = require("./models/User");
+    
+    // Test the exact same query as login
+    const startTime = Date.now();
+    const user = await User.findOne({ phone: "9000000003" }).maxTimeMS(25000).exec();
+    const responseTime = Date.now() - startTime;
+    
+    res.json({
+      status: "success",
+      message: "Login query test completed",
+      database: {
+        userFound: !!user,
+        responseTime: `${responseTime}ms`,
+        user: user ? {
+          phone: user.phone,
+          name: user.name,
+          role: user.role
+        } : null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      message: "Login query test failed",
+      error: error.message,
+      responseTime: "timeout"
+    });
+  }
 });
 
 app.use("/api/auth", authRoutes);
