@@ -55,11 +55,12 @@ async function login(req, res) {
   try {
     const { phone, password } = req.body;
     
-    // Use exec() to avoid buffering and set explicit timeout
-    const user = await User.findOne({ phone })
-      .maxTimeMS(20000) // 20 second query timeout
-      .exec();
-
+    // Use direct MongoDB client to avoid Mongoose buffering in serverless
+    const { getDirectConnection } = require("../config/db");
+    const { db } = await getDirectConnection();
+    
+    const user = await db.collection("users").findOne({ phone });
+    
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }

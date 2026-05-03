@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const multer = require("multer");
 const env = require("./config/env");
 const authRoutes = require("./routes/authRoutes");
 const pgRoutes = require("./routes/pgRoutes");
@@ -11,6 +14,22 @@ const ownerRoutes = require("./routes/ownerRoutes");
 const tenantRoutes = require("./routes/tenantRoutes");
 const userAvatarRoutes = require("./routes/userAvatarRoutes");
 const tenantDocumentsRoutes = require("./routes/tenantDocumentsRoutes");
+
+// Import models
+const User = require("./models/User");
+const OwnerProfile = require("./models/OwnerProfile");
+const PgProperty = require("./models/PgProperty");
+const Bed = require("./models/Bed");
+const Booking = require("./models/Booking");
+const Payment = require("./models/Payment");
+const RentCycle = require("./models/RentCycle");
+const Ticket = require("./models/Ticket");
+const AuditLog = require("./models/AuditLog");
+const SavedPaymentMethod = require("./models/SavedPaymentMethod");
+const PlatformConfig = require("./models/PlatformConfig");
+
+// Import environment and connection manager
+const { ensureConnection, getConnectionStatus } = require("./config/db");
 
 const app = express();
 
@@ -24,28 +43,24 @@ app.use(express.json());
 
 app.get("/api/health", async (_req, res) => {
   try {
+    // Use centralized connection management
+    await ensureConnection();
+    const connectionStatus = getConnectionStatus();
+    
     let dbStatus = "disconnected";
     let dbConnectionInfo = {};
     
-    // Ensure database connection is established
-    if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(env.mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 5000
-      });
-    }
-    
-    if (mongoose.connection.readyState === 1) {
+    if (connectionStatus.readyState === 1) {
       dbStatus = "connected";
       dbConnectionInfo = {
-        host: mongoose.connection.host,
-        port: mongoose.connection.port,
-        name: mongoose.connection.name,
-        readyState: mongoose.connection.readyState
+        host: connectionStatus.host,
+        port: connectionStatus.port,
+        name: connectionStatus.name,
+        readyState: connectionStatus.readyState
       };
-    } else if (mongoose.connection.readyState === 2) {
+    } else if (connectionStatus.readyState === 2) {
       dbStatus = "connecting";
-    } else if (mongoose.connection.readyState === 3) {
+    } else if (connectionStatus.readyState === 3) {
       dbStatus = "disconnecting";
     }
 
@@ -56,7 +71,7 @@ app.get("/api/health", async (_req, res) => {
         status: dbStatus,
         uri: env.mongoUri.replace(/\/\/([^:]+):([^@]+)@/, '//***:***@'), // Hide credentials
         connectionInfo: dbConnectionInfo,
-        readyState: mongoose.connection.readyState
+        readyState: connectionStatus.readyState
       },
       environment: {
         port: env.port,
@@ -76,13 +91,8 @@ app.get("/api/db-test", async (_req, res) => {
   try {
     const startTime = Date.now();
     
-    // If not connected, try to connect first
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connect(env.mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 5000
-      });
-    }
+    // Use centralized connection management
+    await ensureConnection();
     
     // Test database connection with a simple operation
     const testResult = await mongoose.connection.db.admin().ping();
@@ -133,15 +143,8 @@ app.get("/api/db-test", async (_req, res) => {
 
 app.get("/api/seed-check", async (_req, res) => {
   try {
-    const User = require("./models/User");
-    
-    // If not connected, try to connect first
-    if (mongoose.connection.readyState !== 1) {
-      await mongoose.connect(env.mongoUri, {
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 5000
-      });
-    }
+    // Use centralized connection management
+    await ensureConnection();
     
     const startTime = Date.now();
     const userCount = await User.countDocuments();
@@ -175,7 +178,8 @@ app.get("/api/seed-check", async (_req, res) => {
 
 app.get("/api/login-test", async (_req, res) => {
   try {
-    const User = require("./models/User");
+    // Use centralized connection management
+    await ensureConnection();
     
     // Test the exact same query as login
     const startTime = Date.now();
